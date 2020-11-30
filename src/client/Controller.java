@@ -2,17 +2,26 @@ package client;
 
 import javafx.application.Platform;
 import javafx.event.ActionEvent;
+import javafx.event.EventHandler;
 import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
 import javafx.fxml.Initializable;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.control.ListView;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URL;
 import java.util.ResourceBundle;
@@ -31,6 +40,8 @@ public class Controller implements Initializable {
     public TextField loginField;
     @FXML
     public PasswordField passwordField;
+    @FXML
+    public ListView clientList;
 
     private static final int PORT = 8189;
     private final static String HOST = "localhost";
@@ -38,6 +49,11 @@ public class Controller implements Initializable {
     private Socket socket;
     private DataInputStream in;
     private DataOutputStream out;
+
+    // поле для закрытия программы (обрабатывается в графическом потоке)
+    private Stage stage;
+    private Stage regStage;
+    private Signup signup;
 
     private boolean isConnected;
     private boolean isAuthenticated;
@@ -48,6 +64,27 @@ public class Controller implements Initializable {
     @Override
     public void initialize(URL location, ResourceBundle resources) {
         setAuthentication(false);
+        try {
+            createRegWindow();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        Platform.runLater(() -> {
+            endConnection();
+        });
+    }
+
+    //метод для отключения от сервера после закрытия программы
+    private void endConnection() {
+        stage = (Stage)textField.getScene().getWindow();
+        stage.setOnCloseRequest((WindowEvent event) -> {
+            try {
+                if(isAuthenticated)
+                    out.writeUTF("/exit");
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
     }
 
     // основной код работы с сервиром
@@ -69,16 +106,39 @@ public class Controller implements Initializable {
                             setAuthentication(true);
                             break;
                         }
+                        if(msg.startsWith("/200")) {
+                            signup.addMessage("Successful registration");
+                        }
+                        if(msg.startsWith("/400")) {
+                            signup.addMessage("Failed registration");
+                        }
                     }
                     // основной поток
                     while (true) {
                         String msg = in.readUTF();
-                        if (msg.equals("/exit")) {
-                            textArea.appendText("You have been disconnected" + "\n");
-                            isConnected = false;
-                            break;
+                        if (msg.startsWith("/")) {
+
+                            if (msg.equals("/exit")) {
+                                textArea.appendText("You have been disconnected" + "\n");
+                                isConnected = false;
+                                break;
+                            }
+
+                            // добавляем активных пользователей в поле юзеров
+                            if (msg.startsWith("/client")) {
+                                String[] token = msg.split("\\s+");
+                                Platform.runLater(() -> {
+                                    clientList.getItems().clear();
+                                    for (int i = 1; i < token.length; i++) {
+                                        clientList.getItems().add(token[i]);
+                                    }
+                                });
+                            }
+
+                        } else {
+                            textArea.appendText(msg + "\n");
                         }
-                        textArea.appendText(msg + "\n");
+
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -106,11 +166,13 @@ public class Controller implements Initializable {
 
         textPanel.setVisible(isAuthenticated);
         textPanel.setManaged(isAuthenticated);
+        clientList.setVisible(isAuthenticated);
+        clientList.setManaged(isAuthenticated);
 
         if(!isAuthenticated) {
             nickname = "";
         }
-
+        textArea.clear();
         setTitle(nickname);
     }
 
@@ -140,5 +202,38 @@ public class Controller implements Initializable {
         out.writeUTF(String.format("/auth %s %s", loginField.getText().trim().toLowerCase(),
                 passwordField.getText().trim()));
         passwordField.clear();
+    }
+
+    public void personalMsg(MouseEvent mouseEvent) {
+        String name = (String) clientList.getSelectionModel().getSelectedItem();
+        textField.appendText("/w " + name + " ");
+    }
+
+    // метод создает окно для регистрации
+    private void createRegWindow() throws IOException {
+        FXMLLoader fxmlLoader = new FXMLLoader(getClass().getResource("signup.fxml"));
+        Parent root = fxmlLoader.load();
+        regStage = new Stage();
+        regStage.setTitle("Sign Up");
+        regStage.setScene(new Scene(root, 400, 250));
+
+        signup = fxmlLoader.getController();
+        signup.setController(this);
+
+        regStage.initModality(Modality.APPLICATION_MODAL);
+    }
+
+    public void register(String login, String password, String nickname) throws IOException {
+        String msg = String.format("/reg %s %s %s", login, password, nickname);
+
+        if(socket == null || socket.isClosed()) {
+            connection();
+        }
+
+        out.writeUTF(msg);
+    }
+
+    public void register(ActionEvent actionEvent) {
+        regStage.show();
     }
 }

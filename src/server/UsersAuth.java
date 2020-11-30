@@ -35,4 +35,14 @@ public class UsersAuth implements Authentication{
         }
         return null;
     }
+
+    @Override
+    public boolean register(String login, String password, String nickname) {
+        for (User user:users ) {
+            if(user.login.equals(login) || user.nickname.equals(nickname))
+                return false;
+        }
+        users.add(new User(login, password, nickname));
+        return true;
+    }
 }

@@ -3,6 +3,9 @@ package server;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 import java.util.Vector;
 
@@ -78,6 +81,18 @@ public class Server {
         }
         return false;
     }
+
+    public static void clientList() throws IOException {
+        StringBuffer list = new StringBuffer();
+        list.append("/client ");
+        for (MyServer client : clients) {
+            list.append(client.getNickname() + " ");
+        }
+        String msg = list.toString();
+        for (MyServer client : clients) {
+            client.sendMsg(msg);
+        }
+    }
 }
 
 class MyServer implements Runnable {
@@ -98,6 +113,8 @@ class MyServer implements Runnable {
             out = new DataOutputStream(client.getOutputStream());
             System.out.println("Client has connected");
 
+            client.setSoTimeout(10000);
+
             // цикл аутентификации
             while(true) {
                 String msg = in.readUTF();
@@ -108,17 +125,32 @@ class MyServer implements Runnable {
                     String nick = Server.getAuth().getNickname(token[1], token[2]);
 
                     // проверяем на подлинность токена
-                    // TODO finish auth so that a user could not login twice
                     if(nick != null && !Server.isLoggedIn(nick)) {
+                        client.setSoTimeout(0);
                         nickname = nick;
                         // подтверждение (протокол ответа)
                         sendMsg("/authok " + nickname);
                         // добавление клиента в рабочую сеть
                         Server.addConnection(this);
+                        Server.clientList();
                         System.out.println("Client " + nickname + " has connected to the network");
                         break;
                     } else {
                         sendMsg("/authno");
+                    }
+                }
+
+                if(msg.startsWith("/reg")) {
+                    String [] token = msg.split("\\s", 4);
+                    if(token.length < 4) {
+                        sendMsg("/400");
+                    } else {
+                        boolean isSignedUp = Server.getAuth().register(token[1], token[2], token[3]);
+                        if(isSignedUp)
+                            sendMsg("/200");
+                        else
+                            sendMsg("/400");
+                        System.out.println(isSignedUp);
                     }
                 }
             }
@@ -140,6 +172,7 @@ class MyServer implements Runnable {
                             System.out.println("Client has disconnected");
                             sendMsg("/exit");
                             Server.removeConnection(this);
+                            Server.clientList();
                             break;
                         }
                         Server.sendAll(this, msg);
@@ -147,6 +180,13 @@ class MyServer implements Runnable {
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
+            }
+        } catch (SocketTimeoutException e) {
+            try {
+                System.out.println("Client has been disconnected");
+                client.close();
+            } catch (IOException ioException) {
+                ioException.printStackTrace();
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -172,4 +212,12 @@ class MyServer implements Runnable {
 *  /w nickname message (запрос)
 *  /200 ok message (ответ)
 *  /404 (ответ)
+*
+*  Протокол для списка активных клиентов
+*  /client nick1,nick2...
+*
+*  Протокол регистрации
+*  /reg login password name
+*  /200 (ответ + )
+*  /400 (ответ - )
 * */
